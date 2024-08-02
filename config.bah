@@ -1,0 +1,103 @@
+#!/bin/bash
+
+#DNS
+bash -c 'echo -e "nameserver 8.8.8.8\nnameserver 8.8.4.4" > /etc/resolv.conf'
+
+#install GPGKey
+sudo rpm --import /etc/pki/rpm-gpg/RPM-GPG-KEY-AlmaLinux
+
+#update & install packages
+sudo dnf install epel-release -y
+sudo dnf update -y
+sudo dnf upgrade -y
+sudo dnf install -y yum-utils curl wget nano vim git tmux
+
+
+#install & config fail2ban
+sudo dnf install fail2ban -y
+sudo systemctl enable fail2ban
+sudo systemctl start fail2ban
+
+#copy fail2ban config
+sudo cp /etc/fail2ban/jail.conf /etc/fail2ban/jail.local
+
+#configure fail2ban
+sudo sed -i 's/bantime  = 10m/bantime  = 1h/' /etc/fail2ban/jail.local
+sudo sed -i 's/findtime  = 10m/findtime  = 5m/' /etc/fail2ban/jail.local
+sudo sed -i 's/maxretry = 5/maxretry = 3/' /etc/fail2ban/jail.local
+
+
+#installing docker & docker compose
+sudo yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+sudo dnf install -y docker-ce docker-ce-cli containerd.io
+sudo systemctl start docker
+sudo systemctl enable docker
+sudo curl -L "https://github.com/docker/compose/releases/download/v2.3.3/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+sudo chmod +x /usr/local/bin/docker-compose
+sudo usermod -aG docker $USER
+
+
+#install & config firewalld
+sudo dnf install firewalld -y
+sudo systemctl enable firewalld
+sudo systemctl start firewalld
+sudo firewall-cmd --permanent --add-port=80/tcp
+sudo firewall-cmd --permanent --add-service=http
+sudo firewall-cmd --permanent --add-port=443/tcp
+sudo firewall-cmd --permanent --add-service=https
+sudo firewall-cmd --permanent --add-port=22/tcp
+sudo firewall-cmd --reload
+
+
+#Create Docker Compose file
+cat <<EOF> docker-compose.yml
+version: '3'
+
+services:
+  nginx:
+    image: nginx
+    container_name: nginx
+    ports:
+      - "80:80"
+    networks:
+      - net
+
+  mysql:
+    image: mysql
+    container_name: mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: {{PASSWORD}}
+      MYSQL_DATABASE: {{DB_NAME}}
+    ports:
+      - "3306:3306"
+    networks:
+      - net
+
+  phpmyadmin:
+    image: phpmyadmin
+    container_name: phpmyadmin
+    restart: always
+    environment:
+      PMA_HOST: mysql
+      MYSQL_ROOT_PASSWORD: {{PASSWORD}}
+    networks:
+      - net
+
+networks:
+  net:
+
+EOF
+
+
+cat <<EOF>/etc/docker/daemon.json
+{
+	"registry-mirrors": ["https://docker.iranserver.com"]
+}
+EOF
+
+# Reload daemon & docker
+sudo systemctl daemon-reload
+sudo systemctl restart docker
+
+# Run Docker Compose
+docker-compose -p net up -d
